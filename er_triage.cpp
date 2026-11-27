@@ -6,10 +6,13 @@
 #include <queue>
 #include <stack>
 #include <unordered_map>
+#include <unordered_set>
 #include <iomanip>
 #include <limits>
 #include <algorithm>
 using namespace std;
+
+struct EndOfInput {};   // graceful EOF: lets destructors save state
 
 struct Patient {
     int id;
@@ -55,10 +58,26 @@ class HospitalER {
         int val;
         while (true) {
             cout << prompt;
-            if (cin >> val && val >= minVal && val <= maxVal) return val;
+            if (cin >> val) {
+                if (val >= minVal && val <= maxVal) return val;
+            } else if (cin.eof()) {
+                throw EndOfInput{};
+            }
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             cout << "Invalid input (" << minVal << "-" << maxVal << "). Try again.\n";
+        }
+    }
+
+    string readWord(const string& prompt) {
+        string val;
+        while (true) {
+            cout << prompt;
+            if (cin >> val) return val;
+            if (cin.eof()) throw EndOfInput{};
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            cout << "Invalid input. Try again.\n";
         }
     }
 
@@ -126,10 +145,8 @@ public:
 
     void registerPatient() {
         string name, cond;
-        cout << "Patient Name (use _ for spaces): ";
-        cin >> name;
-        cout << "Condition (e.g. Cardiac_Arrest, Burns, Fever): ";
-        cin >> cond;
+        name = readWord("Patient Name (use _ for spaces): ");
+        cond = readWord("Condition (e.g. Cardiac_Arrest, Burns, Fever): ");
         int sev = readInt("Severity (1=Minor to 10=Critical): ", 1, 10);
 
         Patient p{nextId++, name, cond, sev, ++arrivalCounter, "Waiting"};
@@ -165,7 +182,7 @@ public:
     }
 
     void escalateSeverity() {
-        int id = readInt("Enter Waiting Patient ID: ", 100, 99999);
+        int id = readInt("Enter Waiting Patient ID: ", 100, numeric_limits<int>::max());
         auto it = registry.find(id);
         if (it == registry.end() || it->second.status != "Waiting") {
             cout << "Active waiting patient not found.\n";
@@ -183,19 +200,19 @@ public:
             cout << "No patients currently admitted in ward.\n";
             return;
         }
-        int id = readInt("Enter Admitted Patient ID to discharge: ", 100, 99999);
+        int id = readInt("Enter Admitted Patient ID to discharge: ", 100, numeric_limits<int>::max());
         Patient removed;
         if (!removeFromWard(id, removed)) {
             cout << "Patient #" << id << " is not in the ward.\n";
             return;
         }
-        undoStack.push({"DISCHARGE", registry[id]});
+        undoStack.push({"DISCHARGE", removed});
         registry[id].status = "Discharged";
         cout << "Discharged #" << id << " (" << removed.name << "). Bed freed.\n";
     }
 
     void searchPatient() {
-        int id = readInt("Search Patient ID: ", 100, 99999);
+        int id = readInt("Search Patient ID: ", 100, numeric_limits<int>::max());
         auto it = registry.find(id);
         if (it == registry.end()) {
             cout << "Patient #" << id << " not found.\n";
@@ -260,6 +277,7 @@ public:
         cout << string(60, '-') << "\n";
 
         auto copyHeap = waitingHeap;
+        unordered_set<int> shown;   // escalations leave stale heap copies behind
         int pos = 0;
         while (!copyHeap.empty()) {
             Patient p = copyHeap.top();
@@ -267,6 +285,7 @@ public:
             auto it = registry.find(p.id);
             if (it == registry.end() || it->second.status != "Waiting" ||
                 it->second.severity != p.severity) continue;
+            if (!shown.insert(p.id).second) continue;
 
             cout << setw(6) << p.id << setw(16) << p.name << setw(18) << p.condition
                  << setw(10) << (to_string(p.severity) + "/10")
@@ -278,7 +297,8 @@ public:
     }
 
     void saveReport() const {
-        ofstream f("er_records.txt");
+        ofstream f("er_records.txt", ios::trunc);
+        if (!f) { cerr << "Warning: could not write er_records.txt\n"; return; }
         f << "Hospital ER Triage Log - by Aun Haider Niazi\n";
         for (const auto& kv : registry) {
             const Patient& p = kv.second;
@@ -293,6 +313,7 @@ int main() {
     HospitalER er;
     int choice;
 
+    try {
     do {
         er.showDashboard();
         cout << "1. Register Patient   2. Admit Highest-Priority   3. Escalate Severity\n"
@@ -300,6 +321,7 @@ int main() {
              << "7. Exit & Save\nChoice: ";
 
         if (!(cin >> choice)) {
+            if (cin.eof()) { cout << "\nEnd of input. Session saved.\n"; break; }
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             cout << "Invalid input. Enter a number 1-7.\n";
@@ -313,6 +335,9 @@ int main() {
         else if (choice == 5) er.searchPatient();
         else if (choice == 6) er.undoLastAction();
     } while (choice != 7);
+    } catch (const EndOfInput&) {
+        cout << "\nEnd of input. Session saved.\n";
+    }
 
     cout << "Session saved to er_records.txt. Goodbye!\n";
     return 0;
